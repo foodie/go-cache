@@ -18,25 +18,28 @@ import (
 // total cache sizes, and faster for larger ones.
 //
 // See cache_test.go for a few benchmarks.
-
+//分片cache的包装
 type unexportedShardedCache struct {
 	*shardedCache
 }
 
 type shardedCache struct {
-	seed    uint32
-	m       uint32
-	cs      []*cache
-	janitor *shardedJanitor
+	seed    uint32 //种子
+	m       uint32 //哈希值
+	cs      []*cache //cache列表
+	janitor *shardedJanitor//监视器
 }
 
-// djb2 with better shuffling. 5x faster than FNV with the hash.Hash overhead.
+//更快的一种hash算法？
+// djb2 with better shuffling. 
+//5x faster than FNV with the hash.Hash overhead.
 func djb33(seed uint32, k string) uint32 {
 	var (
 		l = uint32(len(k))
 		d = 5381 + seed + l
 		i = uint32(0)
 	)
+	//循环展开
 	// Why is all this 5x faster than a for loop?
 	if l >= 4 {
 		for i < l-4 {
@@ -62,22 +65,23 @@ func djb33(seed uint32, k string) uint32 {
 	return d ^ (d >> 16)
 }
 
+//得到合适的cache
 func (sc *shardedCache) bucket(k string) *cache {
 	return sc.cs[djb33(sc.seed, k)%sc.m]
 }
-
+//设置值
 func (sc *shardedCache) Set(k string, x interface{}, d time.Duration) {
 	sc.bucket(k).Set(k, x, d)
 }
-
+//添加
 func (sc *shardedCache) Add(k string, x interface{}, d time.Duration) error {
 	return sc.bucket(k).Add(k, x, d)
 }
-
+//替换
 func (sc *shardedCache) Replace(k string, x interface{}, d time.Duration) error {
 	return sc.bucket(k).Replace(k, x, d)
 }
-
+//获取
 func (sc *shardedCache) Get(k string) (interface{}, bool) {
 	return sc.bucket(k).Get(k)
 }
@@ -97,7 +101,7 @@ func (sc *shardedCache) Decrement(k string, n int64) error {
 func (sc *shardedCache) Delete(k string) {
 	sc.bucket(k).Delete(k)
 }
-
+//过期处理
 func (sc *shardedCache) DeleteExpired() {
 	for _, v := range sc.cs {
 		v.DeleteExpired()
@@ -109,6 +113,7 @@ func (sc *shardedCache) DeleteExpired() {
 // fields of the items should be checked. Note that explicit synchronization
 // is needed to use a cache and its corresponding Items() return values at
 // the same time, as the maps are shared.
+//导出所有的item
 func (sc *shardedCache) Items() []map[string]Item {
 	res := make([]map[string]Item, len(sc.cs))
 	for i, v := range sc.cs {
@@ -117,12 +122,14 @@ func (sc *shardedCache) Items() []map[string]Item {
 	return res
 }
 
+//刷新值
 func (sc *shardedCache) Flush() {
 	for _, v := range sc.cs {
 		v.Flush()
 	}
 }
 
+//监听器
 type shardedJanitor struct {
 	Interval time.Duration
 	stop     chan bool
@@ -140,11 +147,11 @@ func (j *shardedJanitor) Run(sc *shardedCache) {
 		}
 	}
 }
-
+//暂停
 func stopShardedJanitor(sc *unexportedShardedCache) {
 	sc.janitor.stop <- true
 }
-
+//运行
 func runShardedJanitor(sc *shardedCache, ci time.Duration) {
 	j := &shardedJanitor{
 		Interval: ci,
@@ -152,7 +159,7 @@ func runShardedJanitor(sc *shardedCache, ci time.Duration) {
 	sc.janitor = j
 	go j.Run(sc)
 }
-
+//新建一个sharedCache
 func newShardedCache(n int, de time.Duration) *shardedCache {
 	max := big.NewInt(0).SetUint64(uint64(math.MaxUint32))
 	rnd, err := rand.Int(rand.Reader, max)
@@ -177,7 +184,7 @@ func newShardedCache(n int, de time.Duration) *shardedCache {
 	}
 	return sc
 }
-
+//分片cache，过期检查
 func unexportedNewSharded(defaultExpiration, cleanupInterval time.Duration, shards int) *unexportedShardedCache {
 	if defaultExpiration == 0 {
 		defaultExpiration = -1
